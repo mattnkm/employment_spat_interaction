@@ -1,0 +1,256 @@
+```{r}
+library(sf)
+library(tidygraph)
+library(tidyverse)
+library(reshape)
+library(tmap)
+library(reshape2)
+library(writexl)
+library(readxl)
+library(sp)
+library(heatmaply)
+```
+
+# 2016 Journey to Work
+```{r}
+emp_mat.16 <- read.csv("./Data/GS_2016_JourneyToWork.csv")
+emp_mat.16 <- as.matrix(emp_mat.16)
+rownames(emp_mat.16) <- emp_mat.16[,1]
+emp_mat.16 <- emp_mat.16[,2:2234]
+emp_df.16 <- melt(emp_mat.16)
+
+emp_df.16 <- emp_df.16 %>% 
+  dplyr::rename(Origin = Var1,
+         Destination = Var2,
+         Flow = value)
+emp_df.16$Destination <- substring(emp_df.16$Destination, 2)
+emp_df.16 <- emp_df.16 %>% 
+  arrange(Origin)
+```
+
+# 2011 Journey to Work
+```{r}
+emp_mat.11 <- read_xlsx("./Data/GS_2011_JourneyToWork.xlsx")
+emp_mat.11 <- as.matrix(emp_mat.11)
+rownames(emp_mat.11) <- emp_mat.11[,1]
+
+emp_mat.11 <- emp_mat.11[,2:3644]
+emp_df.11 <- melt(emp_mat.11)
+
+emp_df.11 <- emp_df.11 %>% 
+  dplyr::rename(Origin = Var1,
+         Destination = Var2,
+         Flow = value)
+emp_df.11 <- emp_df.11 %>% 
+  arrange(Origin)
+
+emp_df.11$Origin <- as.character(emp_df.11$Origin)
+emp_df.11$Destination <- as.character(emp_df.11$Destination)
+```
+
+
+# Getting XY Coords
+```{r}
+sa1_shp <- st_read("./Data/shapes/SA1_Centre_Mass.shp")
+sa1.xy <- as.data.frame(st_coordinates(sa1_shp))
+sa1.area <- st_read("./Data/shapes/SYD_SA1_Census_2016.shp")
+sa1.area <-  sa1.area %>% 
+  select(SA1_7DIG16, AREASQKM16) %>% 
+  st_drop_geometry() %>% 
+  dplyr::rename(Origin = SA1_7DIG16,
+                SA1_Area = AREASQKM16)
+                    
+sa1_df <- sa1_shp %>% 
+  select(SA1_7DIG16) %>% 
+  mutate(Origin = SA1_7DIG16,
+    Origin.X = sa1.xy$X,
+         Origin.Y = sa1.xy$Y) %>% 
+  select(-SA1_7DIG16) %>% 
+  st_drop_geometry() 
+
+sa1_df <- sa1_df %>% 
+  inner_join(sa1.area)
+
+dzn_shp <- st_read("./Data/shapes/DZN_Centre_Mass.shp")
+dzn.xy <- as.data.frame(st_coordinates(dzn_shp))
+dzn.area <- st_read("./Data/shapes/GS_DZN_shape.shp")
+dzn.area <- dzn.area %>% 
+  select(DZN_CODE16,AREASQKM16) %>% 
+  st_drop_geometry() %>% 
+  dplyr::rename(Destination = DZN_CODE16,
+                DZN_Area = AREASQKM16)
+
+dzn_df <- dzn_shp %>% 
+  select(DZN_CODE16) %>% 
+  mutate(Destination.X = dzn.xy$X,
+         Destination.Y = dzn.xy$Y) %>% 
+  dplyr::rename(Destination = DZN_CODE16) %>% 
+  st_drop_geometry()
+
+dzn_df <- dzn_df %>% 
+  inner_join(dzn.area)
+
+rm(dzn_shp)
+rm(sa1_shp)
+```
+# Adding Coordinates to Emp Database
+```{r}
+emp_df.16 <- emp_df.16 %>% 
+  inner_join(sa1_df, by = "Origin") %>% 
+  inner_join(dzn_df, by = "Destination")
+
+emp_df.11 <- emp_df.11 %>% 
+  inner_join(sa1_df, by = "Origin") %>% 
+  inner_join(dzn_df, by = "Destination")
+```
+# Setting Origin and Destination Totals
+```{r}
+emp_df.16$Flow <- as.numeric(emp_df.16$Flow)
+
+Origin_Total.16 <- aggregate(emp_df.16$Flow, by=list(Origin = emp_df.16$Origin), FUN = sum)
+Destination_Total.16 <- aggregate(emp_df.16$Flow, by=list(Destination = emp_df.16$Destination), FUN = sum)
+
+emp_df.16 <- emp_df.16 %>%
+  inner_join(Origin_Total.16, by = "Origin") %>% 
+  inner_join(Destination_Total.16, by = "Destination") %>% 
+  dplyr::rename(Origin_Total = x.x,
+                Destination_Total = x.y)
+
+emp_df.11$Flow <- as.numeric(emp_df.11$Flow)
+
+Origin_Total.11 <- aggregate(emp_df.11$Flow, by=list(Origin = emp_df.11$Origin), FUN = sum)
+Destination_Total.11 <- aggregate(emp_df.11$Flow, by = list(Destination = emp_df.11$Destination), FUN = sum)
+
+emp_df.11 <- emp_df.11 %>%
+  inner_join(Origin_Total.11, by = "Origin") %>% 
+  inner_join(Destination_Total.11, by = "Destination") %>% 
+  dplyr::rename(Origin_Total = x.x,
+                Destination_Total = x.y)
+
+```
+
+
+# Adding Distance Variables
+```{r}
+O_t.16 <- emp_df.16 %>% 
+  select(Origin, Origin.X, Origin.Y)
+O_t.16 <- O_t.16 %>% distinct(Origin, .keep_all = T)
+O_t.16 <-  st_as_sf(O_t.16, coords = c('Origin.X', 'Origin.Y'), crs = st_crs(4326))
+
+D_t.16 <- emp_df.16 %>% 
+  select(Destination, Destination.X, Destination.Y)
+D_t.16 <- D_t.16 %>% distinct(Destination, .keep_all = T)
+D_t.16 <-   st_as_sf(D_t.16, coords = c('Destination.X', 'Destination.Y'), crs = st_crs(4326))
+
+O_t.16 <- as(O_t.16, "Spatial")
+D_t.16 <- as(D_t.16, "Spatial")
+
+dist_mat.16 <- spDists(O_t.16,D_t.16)
+dist_pair.16 <- melt(dist_mat.16)
+emp_df.16$Distance <- dist_pair.16$value
+
+O_t.11 <- emp_df.11 %>% 
+  select(Origin, Origin.X, Origin.Y)
+O_t.11 <- O_t.11 %>% distinct(Origin, .keep_all = T)
+O_t.11 <-  st_as_sf(O_t.11, coords = c('Origin.X', 'Origin.Y'), crs = st_crs(4326))
+
+D_t.11 <- emp_df.11 %>% 
+  select(Destination, Destination.X, Destination.Y)
+D_t.11 <- D_t.11 %>% distinct(Destination, .keep_all = T)
+D_t.11 <-   st_as_sf(D_t.11, coords = c('Destination.X', 'Destination.Y'), crs = st_crs(4326))
+
+O_t.11 <- as(O_t.11, "Spatial")
+D_t.11 <- as(D_t.11, "Spatial")
+dist_mat.11 <- spDists(O_t.11,D_t.11)
+dist_pair.11 <- melt(dist_mat.11)
+emp_df.11$Distance <- dist_pair.11$value
+```
+
+# Spatial Interaction
+# generalised accessibility
+
+## r-square function
+```{r}
+CalcRSquared <- function(observed,estimated){
+  r <- cor(observed,estimated)
+  R2 <- r^2
+  R2
+}
+```
+
+# beta 
+```{r}
+options(scipen = 1000)
+beta.16 <- 0.003
+```
+
+```{r}
+emp_ai.16 <- emp_df.16 %>% 
+  select(Origin, Destination, Flow, Origin_Total, Destination_Total, SA1_Area, DZN_Area, Distance) %>% 
+  filter(Flow != 0)
+
+emp_ai.16 <- emp_ai.16 %>% 
+  mutate(f_dij = exp(-beta.16 * Distance)) %>% 
+  mutate(Est_Cost = 1-f_dij) %>% 
+  mutate(ai = (Destination_Total/DZN_Area) * f_dij)
+
+emp_a.16 <- emp_ai.16 %>% 
+  select(Origin, ai)
+
+emp_Ai.16 <- aggregate(emp_a.16$ai, by=list(Origin = emp_a.16$Origin), FUN = sum)
+emp_Ai.16 <- emp_Ai.16 %>% 
+  dplyr::rename(x_Ai = x)
+
+emp_ai.16 <- emp_ai.16 %>% 
+  inner_join(emp_Ai.16) %>% 
+  mutate(Ai = 1/x_Ai)
+
+emp_ai.16 <- emp_ai.16 %>% 
+  mutate(est_flow = (Origin_Total/SA1_Area) * (Destination_Total/DZN_Area) * Ai * f_dij) %>% 
+  mutate(Potential = (Destination_Total/DZN_Area)/f_dij) %>% 
+  mutate(Normalised_Potential = normalize(Potential))
+
+CalcRSquared(emp_ai.16$Flow,emp_ai.16$est_flow)
+
+sa1_Access <- aggregate(emp_ai.16$Normalised_Potential, by=list(Origin = emp_ai.16$Origin), FUN = sum)
+```
+
+```{r}
+beta.11 <- 0.03
+```
+
+```{r}
+emp_ai.11 <- emp_df.11 %>% 
+  select(Origin, Destination, Flow, Origin_Total, Destination_Total, SA1_Area, DZN_Area, Distance) %>% 
+  filter(Flow != 0)
+
+emp_ai.11 <- emp_ai.11 %>% 
+  mutate(f_dij = exp(-beta.11*Distance)) %>% 
+  mutate(Est_Cost = 1-f_dij) %>% 
+  mutate(ai = (Destination_Total/DZN_Area) * f_dij)
+
+emp_a.11 <- emp_ai.11 %>% 
+  select(Origin, ai)
+
+emp_Ai.11 <- aggregate(emp_a.11$ai, by=list(Origin = emp_a.11$Origin), FUN = sum)
+emp_Ai.11 <- emp_Ai.11 %>% 
+  dplyr::rename(x_Ai = x)
+
+emp_ai.11 <- emp_ai.11 %>% 
+  inner_join(emp_Ai.11) %>% 
+  mutate(Ai = 1/x_Ai)
+
+emp_ai.11 <- emp_ai.11 %>% 
+  mutate(est_flow = (Origin_Total/SA1_Area) * (Destination_Total/DZN_Area) * Ai * f_dij) %>% 
+  mutate(Potential = (Destination_Total/DZN_Area)/f_dij) %>% 
+  mutate(Normalised_Potential = normalize(Potential))
+
+sa1_Ai.11 <- aggregate(emp_ai.11$Normalised_Potential, by=list(Origin = emp_ai.11$Origin), FUN = sum)
+
+CalcRSquared(emp_ai.11$Flow,emp_ai.11$est_flow)
+```
+
+
+
+
+
