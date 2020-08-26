@@ -10,6 +10,27 @@ library(readxl)
 library(sp)
 library(heatmaply)
 ```
+# Road Distances
+
+```{r}
+SA1.dist <- read.csv("C:/Users/mattk/OneDrive - UNSW/Data/Census/netdist_sa1_szn.csv")
+SA1.dist <- SA1.dist %>% 
+  select(Name, Total_Leng)
+
+OD <- strsplit(SA1.dist$Name, " - ")
+od.mat <- matrix(unlist(OD), ncol=2, byrow=TRUE)
+od.df <- as.data.frame(od.mat)
+od.df$Distance <- SA1.dist$Total_Leng
+od.df$Distance <- od.df$Distance/1000
+od.df <- od.df %>% 
+  rename(Origin = V1,
+         Destination = V2)
+
+rm(OD)
+rm(od.mat)
+rm(SA1.dist)
+```
+
 
 # 2016 Journey to Work
 ```{r}
@@ -47,7 +68,6 @@ emp_df.11 <- emp_df.11 %>%
 emp_df.11$Origin <- as.character(emp_df.11$Origin)
 emp_df.11$Destination <- as.character(emp_df.11$Destination)
 ```
-
 
 # Getting XY Coords
 ```{r}
@@ -93,6 +113,8 @@ dzn_df <- dzn_df %>%
 rm(dzn_shp)
 rm(sa1_shp)
 ```
+
+
 # Adding Coordinates to Emp Database
 ```{r}
 emp_df.16 <- emp_df.16 %>% 
@@ -128,7 +150,6 @@ emp_df.11 <- emp_df.11 %>%
                 Destination_Total = x.y)
 
 ```
-
 
 # Adding Distance Variables
 ```{r}
@@ -250,7 +271,7 @@ sa1_Ai.11 <- aggregate(emp_ai.11$Normalised_Potential, by=list(Origin = emp_ai.1
 CalcRSquared(emp_ai.11$Flow,emp_ai.11$est_flow)
 ```
 
+```{r}
 
-
-
+```
 

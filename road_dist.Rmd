@@ -1,0 +1,22 @@
+```{r}
+library(sf)
+library(sp)
+library(riverdist)
+library(tidyverse)
+```
+
+```{r}
+syd.rd <- st_read("D:/Users/z3531028/OneDrive - UNSW/Data/Network/Road/06AUG2020/Sydney/Greater_Sydney_Road_Cleaned.shp")
+
+syd.rd$length <- st_length(syd.rd)
+syd.net <- syd.rd %>% 
+  summarise(length = sum(length))
+```
+
+```{r}
+ggplot(syd.net) + geom_sf()
+```
+```{r}
+syd.nd <- line2network(syd.net)
+```
+
