@@ -8,12 +8,14 @@ library(reshape2)
 library(writexl)
 library(readxl)
 library(sp)
+library(biglm)
+library(broom)
 library(heatmaply)
 ```
 # Road Distances
-
+Road distances were computed with ArcGis as R would not function for some reason.
 ```{r}
-SA1.dist <- read.csv("C:/Users/mattk/OneDrive - UNSW/Data/Census/netdist_sa1_szn.csv")
+SA1.dist <- read.csv("D:/Users/z3531028/OneDrive - UNSW/Data/Census/netdist_sa1_szn.csv")
 SA1.dist <- SA1.dist %>% 
   select(Name, Total_Leng)
 
@@ -30,7 +32,6 @@ rm(OD)
 rm(od.mat)
 rm(SA1.dist)
 ```
-
 
 # 2016 Journey to Work
 ```{r}
@@ -114,7 +115,6 @@ rm(dzn_shp)
 rm(sa1_shp)
 ```
 
-
 # Adding Coordinates to Emp Database
 ```{r}
 emp_df.16 <- emp_df.16 %>% 
@@ -125,6 +125,7 @@ emp_df.11 <- emp_df.11 %>%
   inner_join(sa1_df, by = "Origin") %>% 
   inner_join(dzn_df, by = "Destination")
 ```
+
 # Setting Origin and Destination Totals
 ```{r}
 emp_df.16$Flow <- as.numeric(emp_df.16$Flow)
@@ -148,11 +149,20 @@ emp_df.11 <- emp_df.11 %>%
   inner_join(Destination_Total.11, by = "Destination") %>% 
   dplyr::rename(Origin_Total = x.x,
                 Destination_Total = x.y)
-
 ```
 
 # Adding Distance Variables
+Adding road network distance
+
 ```{r}
+emp_df.16 <- emp_df.16 %>% 
+  inner_join(od.df, by = c("Origin", "Destination"))
+emp_df.11 <- emp_df.11 %>% 
+  inner_join(od.df, by = c("Origin", "Destination"))
+```
+
+The code below is a faster way; but it is Euclidean if there is not enough memory to run network query
+```{r eval=FALSE, include=FALSE}
 O_t.16 <- emp_df.16 %>% 
   select(Origin, Origin.X, Origin.Y)
 O_t.16 <- O_t.16 %>% distinct(Origin, .keep_all = T)
@@ -202,18 +212,17 @@ CalcRSquared <- function(observed,estimated){
 # beta 
 ```{r}
 options(scipen = 1000)
-beta.16 <- 0.003
-```
+beta.16 <- -2.201457
+alpha.16 <- 0.4022
 
-```{r}
 emp_ai.16 <- emp_df.16 %>% 
   select(Origin, Destination, Flow, Origin_Total, Destination_Total, SA1_Area, DZN_Area, Distance) %>% 
   filter(Flow != 0)
 
 emp_ai.16 <- emp_ai.16 %>% 
-  mutate(f_dij = exp(-beta.16 * Distance)) %>% 
+  mutate(f_dij = exp(beta.16 * Distance)) %>% 
   mutate(Est_Cost = 1-f_dij) %>% 
-  mutate(ai = (Destination_Total/DZN_Area) * f_dij)
+  mutate(ai = (Destination_Total)^alpha.16 * f_dij)
 
 emp_a.16 <- emp_ai.16 %>% 
   select(Origin, ai)
@@ -227,28 +236,32 @@ emp_ai.16 <- emp_ai.16 %>%
   mutate(Ai = 1/x_Ai)
 
 emp_ai.16 <- emp_ai.16 %>% 
-  mutate(est_flow = (Origin_Total/SA1_Area) * (Destination_Total/DZN_Area) * Ai * f_dij) %>% 
-  mutate(Potential = (Destination_Total/DZN_Area)/f_dij) %>% 
+  mutate(est_flow = (Origin_Total) * (Destination_Total^alpha.16) * Ai * f_dij) %>% 
+  mutate(Potential = (Destination_Total)/f_dij) %>% 
   mutate(Normalised_Potential = normalize(Potential))
 
 CalcRSquared(emp_ai.16$Flow,emp_ai.16$est_flow)
 
-sa1_Access <- aggregate(emp_ai.16$Normalised_Potential, by=list(Origin = emp_ai.16$Origin), FUN = sum)
+write.csv(emp_ai.16, "D:/Users/z3531028/OneDrive - UNSW/Data/Census/2016/Demographic/accessibility_16.csv")
 ```
 
 ```{r}
-beta.11 <- 0.03
+Origin_Total.11 <- aggregate(emp_df.11$Flow, by=list(Origin = emp_df.11$Origin), FUN = sum)
+Destination_Total.11 <- aggregate(emp_df.11$Flow, by = list(Destination = emp_df.11$Destination), FUN = sum)
 ```
 
 ```{r}
+beta.11 <- -1.98785
+alpha.11 <- 0.325
+
 emp_ai.11 <- emp_df.11 %>% 
   select(Origin, Destination, Flow, Origin_Total, Destination_Total, SA1_Area, DZN_Area, Distance) %>% 
   filter(Flow != 0)
 
 emp_ai.11 <- emp_ai.11 %>% 
-  mutate(f_dij = exp(-beta.11*Distance)) %>% 
+  mutate(f_dij = exp(beta.11*Distance)) %>% 
   mutate(Est_Cost = 1-f_dij) %>% 
-  mutate(ai = (Destination_Total/DZN_Area) * f_dij)
+  mutate(ai = (Destination_Total^alpha.11) * f_dij)
 
 emp_a.11 <- emp_ai.11 %>% 
   select(Origin, ai)
@@ -262,16 +275,407 @@ emp_ai.11 <- emp_ai.11 %>%
   mutate(Ai = 1/x_Ai)
 
 emp_ai.11 <- emp_ai.11 %>% 
-  mutate(est_flow = (Origin_Total/SA1_Area) * (Destination_Total/DZN_Area) * Ai * f_dij) %>% 
-  mutate(Potential = (Destination_Total/DZN_Area)/f_dij) %>% 
+  mutate(est_flow = (Origin_Total) * ((Destination_Total^alpha.11)) * Ai * f_dij) %>% 
+  mutate(Potential = (Destination_Total)/f_dij) %>% 
   mutate(Normalised_Potential = normalize(Potential))
 
 sa1_Ai.11 <- aggregate(emp_ai.11$Normalised_Potential, by=list(Origin = emp_ai.11$Origin), FUN = sum)
 
 CalcRSquared(emp_ai.11$Flow,emp_ai.11$est_flow)
+
+write.csv(sa1_Ai.11, "D:/Users/z3531028/OneDrive - UNSW/Data/Census/2016/Demographic/accessibility_11.csv")
+
+```
+
+## Calibrating beta
+
+```{r}
+emp_df.16 <- as.data.frame(emp_df.16)
+emp_df.16$Origin <- as.factor(emp_df.16$Origin)
+
+emp_df.11 <- as.data.frame(emp_df.11)
+emp_df.11$Origin <- as.factor(emp_df.11$Origin)
+```
+
+```{r}
+rm(list=setdiff(ls(), c("emp_df.11", "emp_df.16")))
+```
+
+```{r}
+emp_df.16.t <- emp_df.16 %>% 
+  filter(Origin_Total != 0,
+         Destination_Total != 0,
+         SA1_Area != 0,
+         DZN_Area != 0) %>% 
+  sample_n(5000)
+
+sim.16 <- glm(Flow ~ Origin + 
+                     log(Origin_Total) + 
+                           log((Destination_Total)) + 
+                           log(Distance) - 1, 
+                   data = emp_df.16.t, 
+                   na.action = na.exclude, 
+                   family = poisson(link = 'log'))
+
+sim.16.a <- tidy(sim.16)
+
+emp_df.11.t <- emp_df.11 %>% 
+  filter(Origin_Total != 0,
+         Destination_Total != 0,
+         SA1_Area != 0,
+         DZN_Area != 0) %>% 
+  sample_n(5000)
+
+sim.11 <- glm(Flow ~ Origin + 
+                log((Origin_Total)) +
+                log((Destination_Total)) + 
+                log(Distance) - 1, 
+                   data = emp_df.11.t, 
+                   na.action = na.exclude, 
+                   family = poisson(link = 'log'))
+
+sim.11.a <- tidy(sim.11)
+
 ```
 
 ```{r}
 
+emp_df.16.t <- emp_df.16 %>% 
+  filter(Origin_Total != 0,
+         Destination_Total != 0,
+         SA1_Area != 0,
+         DZN_Area != 0) %>% 
+  sample_n(5000)
+
+sim.16 <- glm(Flow ~ Origin + 
+                     log(Origin_Total) + 
+                           log((Destination_Total)) + 
+                           log(Distance) - 1, 
+                   data = emp_df.16.t, 
+                   na.action = na.exclude, 
+                   family = poisson(link = 'log'))
+
+sim.16.b <- tidy(sim.16)
+
+emp_df.11.t <- emp_df.11 %>% 
+  filter(Origin_Total != 0,
+         Destination_Total != 0,
+         SA1_Area != 0,
+         DZN_Area != 0) %>% 
+  sample_n(5000)
+
+sim.11 <- glm(Flow ~ Origin + 
+                log((Origin_Total)) +
+                log((Destination_Total)) + 
+                log(Distance) - 1, 
+                   data = emp_df.11.t, 
+                   na.action = na.exclude, 
+                   family = poisson(link = 'log'))
+
+sim.11.b <- tidy(sim.11)
+
 ```
 
+```{r}
+
+emp_df.16.t <- emp_df.16 %>% 
+  filter(Origin_Total != 0,
+         Destination_Total != 0,
+         SA1_Area != 0,
+         DZN_Area != 0) %>% 
+  sample_n(5000)
+
+sim.16 <- glm(Flow ~ Origin + 
+                     log(Origin_Total) + 
+                           log((Destination_Total)) + 
+                           log(Distance) - 1, 
+                   data = emp_df.16.t, 
+                   na.action = na.exclude, 
+                   family = poisson(link = 'log'))
+
+sim.16.c <- tidy(sim.16)
+
+emp_df.11.t <- emp_df.11 %>% 
+  filter(Origin_Total != 0,
+         Destination_Total != 0,
+         SA1_Area != 0,
+         DZN_Area != 0) %>% 
+  sample_n(5000)
+
+sim.11 <- glm(Flow ~ Origin + 
+                log((Origin_Total)) +
+                log((Destination_Total)) + 
+                log(Distance) - 1, 
+                   data = emp_df.11.t, 
+                   na.action = na.exclude, 
+                   family = poisson(link = 'log'))
+
+sim.11.c <- tidy(sim.11)
+
+```
+
+```{r}
+
+emp_df.16.t <- emp_df.16 %>% 
+  filter(Origin_Total != 0,
+         Destination_Total != 0,
+         SA1_Area != 0,
+         DZN_Area != 0) %>% 
+  sample_n(5000)
+
+sim.16 <- glm(Flow ~ Origin + 
+                     log(Origin_Total) + 
+                           log((Destination_Total)) + 
+                           log(Distance) - 1, 
+                   data = emp_df.16.t, 
+                   na.action = na.exclude, 
+                   family = poisson(link = 'log'))
+
+sim.16.d <- tidy(sim.16)
+
+emp_df.11.t <- emp_df.11 %>% 
+  filter(Origin_Total != 0,
+         Destination_Total != 0,
+         SA1_Area != 0,
+         DZN_Area != 0) %>% 
+  sample_n(5000)
+
+sim.11 <- glm(Flow ~ Origin + 
+                log((Origin_Total)) +
+                log((Destination_Total)) + 
+                log(Distance) - 1, 
+                   data = emp_df.11.t, 
+                   na.action = na.exclude, 
+                   family = poisson(link = 'log'))
+
+sim.11.d <- tidy(sim.11)
+
+```
+
+```{r}
+
+emp_df.16.t <- emp_df.16 %>% 
+  filter(Origin_Total != 0,
+         Destination_Total != 0,
+         SA1_Area != 0,
+         DZN_Area != 0) %>% 
+  sample_n(5000)
+
+sim.16 <- glm(Flow ~ Origin + 
+                     log(Origin_Total) + 
+                           log((Destination_Total)) + 
+                           log(Distance) - 1, 
+                   data = emp_df.16.t, 
+                   na.action = na.exclude, 
+                   family = poisson(link = 'log'))
+
+sim.16.e <- tidy(sim.16)
+
+emp_df.11.t <- emp_df.11 %>% 
+  filter(Origin_Total != 0,
+         Destination_Total != 0,
+         SA1_Area != 0,
+         DZN_Area != 0) %>% 
+  sample_n(5000)
+
+sim.11 <- glm(Flow ~ Origin + 
+                log((Origin_Total)) +
+                log((Destination_Total)) + 
+                log(Distance) - 1, 
+                   data = emp_df.11.t, 
+                   na.action = na.exclude, 
+                   family = poisson(link = 'log'))
+
+sim.11.e <- tidy(sim.11)
+
+```
+
+```{r}
+
+emp_df.16.t <- emp_df.16 %>% 
+  filter(Origin_Total != 0,
+         Destination_Total != 0,
+         SA1_Area != 0,
+         DZN_Area != 0) %>% 
+  sample_n(5000)
+
+sim.16 <- glm(Flow ~ Origin + 
+                     log(Origin_Total) + 
+                           log((Destination_Total)) + 
+                           log(Distance) - 1, 
+                   data = emp_df.16.t, 
+                   na.action = na.exclude, 
+                   family = poisson(link = 'log'))
+
+sim.16.f <- tidy(sim.16)
+
+emp_df.11.t <- emp_df.11 %>% 
+  filter(Origin_Total != 0,
+         Destination_Total != 0,
+         SA1_Area != 0,
+         DZN_Area != 0) %>% 
+  sample_n(5000)
+
+sim.11 <- glm(Flow ~ Origin + 
+                log((Origin_Total)) +
+                log((Destination_Total)) + 
+                log(Distance) - 1, 
+                   data = emp_df.11.t, 
+                   na.action = na.exclude, 
+                   family = poisson(link = 'log'))
+
+sim.11.f <- tidy(sim.11)
+
+```
+
+```{r}
+
+emp_df.16.t <- emp_df.16 %>% 
+  filter(Origin_Total != 0,
+         Destination_Total != 0,
+         SA1_Area != 0,
+         DZN_Area != 0) %>% 
+  sample_n(5000)
+
+sim.16 <- glm(Flow ~ Origin + 
+                     log(Origin_Total) + 
+                           log((Destination_Total)) + 
+                           log(Distance) - 1, 
+                   data = emp_df.16.t, 
+                   na.action = na.exclude, 
+                   family = poisson(link = 'log'))
+
+sim.16.g <- tidy(sim.16)
+
+emp_df.11.t <- emp_df.11 %>% 
+  filter(Origin_Total != 0,
+         Destination_Total != 0,
+         SA1_Area != 0,
+         DZN_Area != 0) %>% 
+  sample_n(5000)
+
+sim.11 <- glm(Flow ~ Origin + 
+                log((Origin_Total)) +
+                log((Destination_Total)) + 
+                log(Distance) - 1, 
+                   data = emp_df.11.t, 
+                   na.action = na.exclude, 
+                   family = poisson(link = 'log'))
+
+sim.11.g <- tidy(sim.11)
+
+```
+
+```{r}
+
+emp_df.16.t <- emp_df.16 %>% 
+  filter(Origin_Total != 0,
+         Destination_Total != 0,
+         SA1_Area != 0,
+         DZN_Area != 0) %>% 
+  sample_n(5000)
+
+sim.16 <- glm(Flow ~ Origin + 
+                     log(Origin_Total) + 
+                           log((Destination_Total)) + 
+                           log(Distance) - 1, 
+                   data = emp_df.16.t, 
+                   na.action = na.exclude, 
+                   family = poisson(link = 'log'))
+
+sim.16.h <- tidy(sim.16)
+
+emp_df.11.t <- emp_df.11 %>% 
+  filter(Origin_Total != 0,
+         Destination_Total != 0,
+         SA1_Area != 0,
+         DZN_Area != 0) %>% 
+  sample_n(5000)
+
+sim.11 <- glm(Flow ~ Origin + 
+                log((Origin_Total)) +
+                log((Destination_Total)) + 
+                log(Distance) - 1, 
+                   data = emp_df.11.t, 
+                   na.action = na.exclude, 
+                   family = poisson(link = 'log'))
+
+sim.11.h <- tidy(sim.11)
+
+```
+
+```{r}
+
+emp_df.16.t <- emp_df.16 %>% 
+  filter(Origin_Total != 0,
+         Destination_Total != 0,
+         SA1_Area != 0,
+         DZN_Area != 0) %>% 
+  sample_n(5000)
+
+sim.16 <- glm(Flow ~ Origin + 
+                     log(Origin_Total) + 
+                           log((Destination_Total)) + 
+                           log(Distance) - 1, 
+                   data = emp_df.16.t, 
+                   na.action = na.exclude, 
+                   family = poisson(link = 'log'))
+
+sim.16.i <- tidy(sim.16)
+
+emp_df.11.t <- emp_df.11 %>% 
+  filter(Origin_Total != 0,
+         Destination_Total != 0,
+         SA1_Area != 0,
+         DZN_Area != 0) %>% 
+  sample_n(5000)
+
+sim.11 <- glm(Flow ~ Origin + 
+                log((Origin_Total)) +
+                log((Destination_Total)) + 
+                log(Distance) - 1, 
+                   data = emp_df.11.t, 
+                   na.action = na.exclude, 
+                   family = poisson(link = 'log'))
+
+sim.11.i <- tidy(sim.11)
+
+```
+
+```{r}
+
+emp_df.16.t <- emp_df.16 %>% 
+  filter(Origin_Total != 0,
+         Destination_Total != 0,
+         SA1_Area != 0,
+         DZN_Area != 0) %>% 
+  sample_n(5000)
+
+sim.16 <- glm(Flow ~ Origin + 
+                     log(Origin_Total) + 
+                           log((Destination_Total)) + 
+                           log(Distance) - 1, 
+                   data = emp_df.16.t, 
+                   na.action = na.exclude, 
+                   family = poisson(link = 'log'))
+
+sim.16.j <- tidy(sim.16)
+
+emp_df.11.t <- emp_df.11 %>% 
+  filter(Origin_Total != 0,
+         Destination_Total != 0,
+         SA1_Area != 0,
+         DZN_Area != 0) %>% 
+  sample_n(5000)
+
+sim.11 <- glm(Flow ~ Origin + 
+                log((Origin_Total)) +
+                log((Destination_Total)) + 
+                log(Distance) - 1, 
+                   data = emp_df.11.t, 
+                   na.action = na.exclude, 
+                   family = poisson(link = 'log'))
+
+sim.11.j <- tidy(sim.11)
+
+```
